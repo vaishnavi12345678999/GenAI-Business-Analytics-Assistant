@@ -58,7 +58,7 @@ Users can upload **CSV / Excel datasets** or **PDF reports** and interact with t
 
 ### 📄 PDF Question Answering Demo
 
-https://github.com/user-attachments/assets/PASTE-YOUR-PDF-VIDEO-LINK-HERE
+https://github.com/vaishnavi12345678999/GenAI-Business-Analytics-Assistant/issues/2#issue-4071560666
 
 ---
 
