@@ -4,7 +4,7 @@
 ![Framework](https://img.shields.io/badge/Framework-Streamlit-red)
 ![Database](https://img.shields.io/badge/Database-DuckDB-orange)
 ![LLM](https://img.shields.io/badge/LLM-Ollama%20Phi3-green)
-![License](https://img.shields.io/badge/License-MIT-yellow)
+
 
 An **AI-powered Business Analytics Assistant** built with **Streamlit, DuckDB, and Ollama** that enables users to analyze datasets and documents using **natural language queries**.
 
@@ -221,6 +221,4 @@ GenAI-Business-Analytics-Assistant/
 
 ---
 
-## 📄 License
 
-MIT
