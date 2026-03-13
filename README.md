@@ -52,7 +52,7 @@ Users can upload **CSV / Excel datasets** or **PDF reports** and interact with t
 
 ### 📊 Excel / Dataset Analytics Demo
 
-https://github.com/user-attachments/assets/PASTE-YOUR-EXCEL-VIDEO-LINK-HERE
+(https://github.com/vaishnavi12345678999/GenAI-Business-Analytics-Assistant/issues/1#issue-4071522148)
 
 ---
 
