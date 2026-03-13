@@ -18,6 +18,7 @@ st.write("Upload dataset or PDF and analyze using AI.")
 uploaded_file = st.file_uploader("Upload CSV or Excel", type=["csv", "xlsx"])
 pdf_file = st.file_uploader("Upload PDF for knowledge (RAG)", type=["pdf"])
 
+
 # -----------------------------
 # Load dataset
 # -----------------------------
@@ -30,6 +31,10 @@ def load_data(file):
         df = pd.read_excel(file)
 
     df = df.replace(",", "", regex=True)
+
+    # Convert numeric columns automatically
+    for col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors="ignore")
 
     return df
 
@@ -175,28 +180,10 @@ if uploaded_file:
     # Automatic insights
     st.subheader("📊 Automatic Dataset Insights")
 
-    numeric_cols = df.select_dtypes(include=["int64","float64"]).columns
+    numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns
 
     for col in numeric_cols[:3]:
         st.write(f"Average {col}: {df[col].mean():.2f}")
-
-    # AI summary
-    summary_prompt = f"""
-Explain this dataset.
-
-Columns:
-{list(df.columns)}
-
-Rows: {len(df)}
-
-Give 3 insights.
-"""
-
-    with st.spinner("Generating dataset insights..."):
-        summary = generate_response(summary_prompt)
-
-    st.subheader("🧠 AI Dataset Summary")
-    st.write(summary)
 
 
 # -----------------------------
@@ -231,12 +218,6 @@ if user_query:
         rag_prompt = f"""
 Answer using the context.
 
-If the answer contains numbers return table format:
-
-Region | Growth
-North America | 12
-Asia-Pacific | 10
-
 Context:
 {context}
 
@@ -248,78 +229,33 @@ Question:
             rag_answer = generate_response(rag_prompt)
 
         st.subheader("📄 Answer from PDF")
-
-        rows = []
-
-        for line in rag_answer.split("\n"):
-
-            line = line.strip()
-
-            if "|" not in line:
-                continue
-
-            if "Region" in line and "Growth" in line:
-                continue
-
-            if "---" in line:
-                continue
-
-            parts = line.split("|")
-
-            if len(parts) == 2:
-
-                category = parts[0].strip()
-                value = parts[1].strip()
-
-                rows.append([category, value])
-
-        if rows:
-
-            df_rag = pd.DataFrame(rows, columns=["Category","Value"])
-
-            df_rag["Value"] = pd.to_numeric(df_rag["Value"], errors="coerce")
-            df_rag = df_rag.dropna()
-
-            st.dataframe(df_rag)
-
-            fig, ax = plt.subplots()
-            df_rag.plot(x="Category", y="Value", kind="bar", ax=ax)
-
-            plt.xticks(rotation=45)
-            plt.tight_layout()
-
-            st.pyplot(fig)
-
-        else:
-            st.write(rag_answer)
+        st.write(rag_answer)
 
         st.session_state.messages.append({"role":"assistant","content":rag_answer})
 
         st.stop()
+
 
     # -----------------------------
     # Dataset SQL queries
     # -----------------------------
     if df is not None:
 
-        if "rows" in user_query.lower():
-
-            result = df.head(5)
-
-            st.subheader("Result")
-            st.dataframe(result)
-
-            st.stop()
-
         prompt = f"""
-Generate DuckDB SQL.
+You are an expert data analyst.
 
-Table name: data
+Generate valid DuckDB SQL.
+
+Rules:
+- Table name is data
+- Use LIMIT instead of TOP
+- Only use columns provided
+- Do not invent columns
+- Return SQL only
+- No explanation
 
 Columns:
 {list(df.columns)}
-
-Return only SQL.
 
 Question:
 {user_query}
@@ -330,21 +266,25 @@ Question:
 
         sql_query = sql_query.replace("```sql","").replace("```","").strip()
 
-        if ";" in sql_query:
-            sql_query = sql_query.split(";")[0] + ";"
+        # Fix common mistakes
+        sql_query = sql_query.replace("TOP 5","")
+
+        if "limit" not in sql_query.lower():
+            sql_query += " LIMIT 5"
 
         st.subheader("Generated SQL")
         st.code(sql_query)
 
         try:
             result = duckdb.query(sql_query).to_df()
-        except:
-            st.error("SQL execution failed.")
+        except Exception as e:
+            st.error(f"SQL execution failed: {e}")
             st.stop()
 
         st.subheader("Result")
         st.dataframe(result)
 
+        # Download results
         csv = result.to_csv(index=False)
 
         st.download_button(
@@ -354,24 +294,32 @@ Question:
             mime="text/csv"
         )
 
+
+        # -----------------------------
+        # Visualization (COMPACT FIX)
+        # -----------------------------
         if len(result.columns) >= 2:
 
             x_col = result.columns[0]
             y_col = result.columns[1]
 
-            fig, ax = plt.subplots()
+            fig, ax = plt.subplots(figsize=(7,4))   # Smaller chart
 
             if "year" in x_col.lower():
                 result.plot(x=x_col, y=y_col, kind="line", ax=ax)
             else:
                 result.plot(x=x_col, y=y_col, kind="bar", ax=ax)
 
-            plt.xticks(rotation=45)
+            plt.xticks(rotation=30)
             plt.tight_layout()
 
             st.subheader("Visualization")
             st.pyplot(fig)
 
+
+        # -----------------------------
+        # Insight
+        # -----------------------------
         st.subheader("Quick Insight")
 
         if len(result.columns) >= 2:
@@ -381,3 +329,7 @@ Question:
             st.write(
                 f"📌 Highest value is **{top_row[1]}** for **{top_row[0]}**."
             )
+
+        st.session_state.messages.append(
+            {"role":"assistant","content":"Analysis completed."}
+        )
