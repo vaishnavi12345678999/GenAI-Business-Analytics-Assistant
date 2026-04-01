@@ -1,22 +1,18 @@
-import sys
-import platform
-if platform.system() == "Linux":
-    __import__('pysqlite3')
-    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
-
 import streamlit as st
 import pandas as pd
 import duckdb
 import matplotlib.pyplot as plt
-import chromadb
+import numpy as np
 from groq import Groq
 from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 from pypdf import PdfReader
 
 st.set_page_config(page_title="AI Business Analytics Assistant", layout="wide")
 
 st.title("📊 AI Business Analytics Assistant")
 st.write("Upload dataset or PDF and analyze using AI.")
+
 
 # -----------------------------
 # LLM request (Groq)
@@ -49,12 +45,9 @@ def load_data(file):
         df = pd.read_csv(file)
     else:
         df = pd.read_excel(file)
-
     df = df.replace(",", "", regex=True)
-
     for col in df.columns:
         df[col] = pd.to_numeric(df[col], errors="ignore")
-
     return df
 
 
@@ -68,7 +61,11 @@ if "messages" not in st.session_state:
 # -----------------------------
 # Embedding model
 # -----------------------------
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+@st.cache_resource
+def load_embedding_model():
+    return SentenceTransformer("all-MiniLM-L6-v2")
+
+embedding_model = load_embedding_model()
 
 
 # -----------------------------
@@ -95,44 +92,34 @@ def split_text(text, chunk_size=500):
 
 
 # -----------------------------
-# Build vector DB
+# Build vector store (no ChromaDB)
 # -----------------------------
 @st.cache_resource
 def build_vector_store(chunks):
-    client = chromadb.Client()
-    collection = client.get_or_create_collection("pdf_docs")
-    for i, chunk in enumerate(chunks):
-        embedding = embedding_model.encode(chunk).tolist()
-        collection.add(
-            documents=[chunk],
-            embeddings=[embedding],
-            ids=[f"doc_{i}"]
-        )
-    return collection
+    embeddings = embedding_model.encode(chunks)
+    return chunks, embeddings
 
 
 # -----------------------------
 # Retrieve PDF context
 # -----------------------------
-def retrieve_context(question, collection):
-    query_embedding = embedding_model.encode(question).tolist()
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=3
-    )
-    context = "\n".join(results["documents"][0])
+def retrieve_context(question, chunks, embeddings):
+    query_embedding = embedding_model.encode([question])
+    scores = cosine_similarity(query_embedding, embeddings)[0]
+    top_indices = np.argsort(scores)[-3:][::-1]
+    context = "\n".join([chunks[i] for i in top_indices])
     return context
 
 
 # -----------------------------
 # Build RAG system
 # -----------------------------
-pdf_collection = None
+pdf_chunks = None
+pdf_embeddings = None
 
 if pdf_file:
     pdf_text = load_pdf(pdf_file)
-    pdf_chunks = split_text(pdf_text)
-    pdf_collection = build_vector_store(pdf_chunks)
+    pdf_chunks, pdf_embeddings = build_vector_store(split_text(pdf_text))
     st.success("📄 PDF knowledge base ready!")
 
 
@@ -143,16 +130,11 @@ df = None
 
 if uploaded_file:
     df = load_data(uploaded_file)
-
     st.subheader("Dataset Preview")
     st.dataframe(df.head())
-
     duckdb.register("data", df)
-
     st.subheader("📊 Automatic Dataset Insights")
-
     numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns
-
     for col in numeric_cols[:3]:
         st.write(f"Average {col}: {df[col].mean():.2f}")
 
@@ -167,7 +149,7 @@ for msg in st.session_state.messages:
 
 user_query = None
 
-if uploaded_file or pdf_collection:
+if uploaded_file or pdf_chunks:
     user_query = st.chat_input("Ask a question about your data or PDF")
 
 
@@ -179,13 +161,9 @@ if user_query:
     st.session_state.messages.append({"role": "user", "content": user_query})
     st.chat_message("user").write(user_query)
 
-    # -----------------------------
     # PDF RAG
-    # -----------------------------
-    if pdf_collection and df is None:
-
-        context = retrieve_context(user_query, pdf_collection)
-
+    if pdf_chunks and df is None:
+        context = retrieve_context(user_query, pdf_chunks, pdf_embeddings)
         rag_prompt = f"""
 Answer using the context below. Be concise and helpful.
 
@@ -200,23 +178,14 @@ Question:
 
         st.subheader("📄 Answer from PDF")
         st.write(rag_answer)
-
-        st.session_state.messages.append(
-            {"role": "assistant", "content": rag_answer}
-        )
-
+        st.session_state.messages.append({"role": "assistant", "content": rag_answer})
         st.stop()
 
-    # -----------------------------
     # Dataset SQL queries
-    # -----------------------------
     if df is not None:
-
         prompt = f"""
 You are an expert data analyst.
-
 Generate valid DuckDB SQL.
-
 Rules:
 - Table name is data
 - Use LIMIT instead of TOP
@@ -253,7 +222,6 @@ Question:
         st.dataframe(result)
 
         csv = result.to_csv(index=False)
-
         st.download_button(
             label="Download Results as CSV",
             data=csv,
@@ -261,46 +229,25 @@ Question:
             mime="text/csv"
         )
 
-        # -----------------------------
-        # Visualization
-        # -----------------------------
         if len(result.columns) >= 2:
-
-            numeric_cols = result.select_dtypes(
-                include=["int64", "float64"]
-            ).columns
-
+            numeric_cols = result.select_dtypes(include=["int64", "float64"]).columns
             if len(numeric_cols) == 0:
                 st.warning("No numeric data available for visualization.")
             else:
                 x_col = result.columns[0]
                 y_col = numeric_cols[0]
-
                 result[y_col] = pd.to_numeric(result[y_col], errors="coerce")
                 result = result.dropna(subset=[y_col])
-
                 num_rows = len(result)
                 fig_width = max(8, num_rows * 1.2)
-
                 fig, ax = plt.subplots(figsize=(fig_width, 5))
-
                 if "year" in x_col.lower() or "date" in x_col.lower():
-                    result.plot(
-                        x=x_col, y=y_col, kind="line", ax=ax,
-                        marker="o", linewidth=2.5, color="#4C72B0"
-                    )
+                    result.plot(x=x_col, y=y_col, kind="line", ax=ax, marker="o", linewidth=2.5, color="#4C72B0")
                 else:
-                    result.plot(
-                        x=x_col, y=y_col, kind="bar", ax=ax,
-                        color="#4C72B0", edgecolor="white", width=0.6
-                    )
+                    result.plot(x=x_col, y=y_col, kind="bar", ax=ax, color="#4C72B0", edgecolor="white", width=0.6)
                     for container in ax.containers:
                         ax.bar_label(container, fmt="%.1f", padding=4, fontsize=9)
-
-                ax.set_title(
-                    f"{y_col} by {x_col}",
-                    fontsize=14, fontweight="bold", pad=15
-                )
+                ax.set_title(f"{y_col} by {x_col}", fontsize=14, fontweight="bold", pad=15)
                 ax.set_xlabel(x_col)
                 ax.set_ylabel(y_col)
                 ax.spines["top"].set_visible(False)
@@ -308,24 +255,15 @@ Question:
                 ax.yaxis.grid(True, linestyle="--", alpha=0.7)
                 plt.xticks(rotation=35, ha="right")
                 plt.tight_layout()
-
                 st.subheader("📊 Visualization")
                 st.pyplot(fig, use_container_width=True)
 
-        # -----------------------------
-        # Insight
-        # -----------------------------
         st.subheader("Quick Insight")
-
         if len(result.columns) >= 2 and len(numeric_cols) > 0:
             try:
                 top_row = result.iloc[result[y_col].idxmax()]
-                st.write(
-                    f"📌 Highest value is **{top_row[y_col]}** for **{top_row[result.columns[0]]}**."
-                )
+                st.write(f"📌 Highest value is **{top_row[y_col]}** for **{top_row[result.columns[0]]}**.")
             except:
                 st.info("Insight could not be generated.")
 
-        st.session_state.messages.append(
-            {"role": "assistant", "content": "Analysis completed."}
-        )
+        st.session_state.messages.append({"role": "assistant", "content": "Analysis completed."})
