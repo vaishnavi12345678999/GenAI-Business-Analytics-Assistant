@@ -1,0 +1,10 @@
+streamlit
+pandas
+duckdb
+matplotlib
+sentence-transformers
+pypdf
+groq
+numpy
+openpyxl
+scikit-learn
