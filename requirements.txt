@@ -1,10 +1,12 @@
-streamlit
-pandas
-duckdb
-matplotlib
+streamlit==1.33.0
+pandas==2.2.2
+duckdb==0.10.2
+matplotlib==3.8.4
+
 chromadb==0.4.24
-sentence-transformers
-pypdf
-groq
+sentence-transformers==2.7.0
+pypdf==4.2.0
+groq==0.5.0
 
 protobuf==3.20.3
+pydantic==1.10.13
