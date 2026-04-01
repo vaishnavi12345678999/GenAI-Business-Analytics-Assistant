@@ -2,9 +2,7 @@ streamlit
 pandas
 duckdb
 matplotlib
+chromadb
+groq
 sentence-transformers
 pypdf
-groq
-numpy
-openpyxl
-scikit-learn
